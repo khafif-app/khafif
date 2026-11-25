@@ -68,7 +68,8 @@ function save(u) {
 }
 
 const server = http.createServer((req, res) => {
-  let p = req.url === '/' ? '/index.html' : decodeURIComponent(req.url.split('?')[0]);
+  let p = decodeURIComponent(req.url.split('?')[0]);
+  if (p === '/') p = '/index.html';
   if (p === '/vapid-public') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end(process.env.VAPID_PUBLIC || ''); return; }
   const file = path.join(__dirname, 'public', path.normalize(p).replace(/^(\.\.[\/\\])+/, ''));
   fs.readFile(file, (err, data) => {
