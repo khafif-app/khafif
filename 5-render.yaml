@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: khafif-chat
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+  - type: web
+    name: khafif-signal
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node signal-server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22

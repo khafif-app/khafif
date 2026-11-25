@@ -1,0 +1,14 @@
+{
+  "name": "khafif-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight private chat + voice + screen share (prototype)",
+  "main": "server.js",
+  "dependencies": {
+    "pg": "^8.23.1",
+    "ws": "^8.18.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
