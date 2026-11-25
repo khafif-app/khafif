@@ -70,6 +70,10 @@ public class MainActivity extends Activity {
     share.setText("شارك الشاشة");
     share.setOnClickListener(v -> startFlow());
     root.addView(share);
+    Button stop = new Button(this);
+    stop.setText("إنهاء المشاركة");
+    stop.setOnClickListener(v -> cleanup("اتقفلت بإيدك"));
+    root.addView(stop);
     scroller = new ScrollView(this);
     logView = new TextView(this);
     logView.setTextSize(12);
@@ -154,7 +158,7 @@ public class MainActivity extends Activity {
       pc = factory.createPeerConnection(cfg, new PcObserver());
       log("WebRTC جاهز. بيبدأ التقاط الشاشة...");
       capturer = new ScreenCapturerAndroid(projData, new MediaProjection.Callback() {
-        @Override public void onStop() { log("المشاركة وقفت من النظام"); }
+        @Override public void onStop() { cleanup("المشاركة وقفت من النظام"); }
       });
       VideoSource src = factory.createVideoSource(true);
       SurfaceTextureHelper helper = SurfaceTextureHelper.create("cap", egl.getEglBaseContext());
@@ -163,6 +167,7 @@ public class MainActivity extends Activity {
       capturer.startCapture(dm.widthPixels, dm.heightPixels, dm.scaledDensity >= 3 ? 12 : 15);
       VideoTrack track = factory.createVideoTrack("screen", src);
       pc.addTrack(track, Collections.singletonList("screen-stream"));
+      sharing = true;
       log("الالتقاط شغال. بيعمل عرض اتصال...");
       pc.createOffer(new SdpObs("offer") {
         @Override public void onCreateSuccess(SessionDescription sdp) {
@@ -192,9 +197,25 @@ public class MainActivity extends Activity {
         if (pc == null || pc.getRemoteDescription() == null) pendingCand.add(c.toString());
         else addCand(c.toString());
       } else if (data.optString("call").equals("end")) {
-        log("الطرف التاني قفل");
+        cleanup("الطرف التاني قفل");
       }
     } catch (Throwable t) { log("خطأ إشارة: " + t); }
+  }
+
+  boolean sharing = false;
+  void cleanup(String why) {
+    log("قفل: " + why);
+    try { if (sharing) sig(new JSONObject().put("call", "end")); } catch (Throwable t) {}
+    sharing = false;
+    try { if (capturer != null) { capturer.stopCapture(); capturer.dispose(); capturer = null; } } catch (Throwable t) { log("خطأ وقف الالتقاط: " + t); }
+    try { if (pc != null) { pc.close(); pc = null; } } catch (Throwable t) { log("خطأ قفل الاتصال: " + t); }
+    pendingCand.clear();
+    try { stopService(new Intent(this, ShareService.class)); } catch (Throwable t) {}
+  }
+
+  @Override protected void onDestroy() {
+    if (sharing) cleanup("التطبيق اتقفل");
+    super.onDestroy();
   }
 
   void addCand(String packed) {
