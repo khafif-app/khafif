@@ -49,8 +49,9 @@ public class MainActivity extends Activity {
   VideoCapturer capturer;
   String me, friend;
   boolean loggedIn = false;
+  volatile boolean stateReceived = false;
   String pendingAuth = null; // "login" or "register" across a ws reconnect
-  final Map<String, Boolean> friends = new HashMap<>(); // name -> online
+  final Map<String, Boolean> friends = Collections.synchronizedMap(new HashMap<>()); // name -> online; written on ws thread, read on UI thread
   final ArrayDeque<String> pendingCand = new ArrayDeque<>();
   static final String WS_URL = "wss://khafif-signal.onrender.com/ws";
 
@@ -175,6 +176,7 @@ public class MainActivity extends Activity {
         setStatus("مسجل كـ " + me);
         log(t.equals("registered") ? "الحساب اتعمل ودخلنا" : "دخلنا تمام");
       } else if (t.equals("state")) {
+        stateReceived = true;
         friends.clear();
         JSONArray fs = m.optJSONArray("friends");
         if (fs != null) for (int i = 0; i < fs.length(); i++) {
@@ -183,7 +185,7 @@ public class MainActivity extends Activity {
         }
         StringBuilder sb = new StringBuilder("أصحابك: ");
         if (friends.isEmpty()) sb.append("لسه مفيش. ضيف صاحبك من صفحة الشات الأول");
-        else for (Map.Entry<String, Boolean> e : friends.entrySet()) sb.append(e.getKey()).append(e.getValue() ? " (متصل)" : " (مش متصل)").append("، ");
+        else synchronized (friends) { for (Map.Entry<String, Boolean> e : friends.entrySet()) sb.append(e.getKey()).append(e.getValue() ? " (متصل)" : " (مش متصل)").append("، "); }
         log(sb.toString());
       } else if (t.equals("presence")) {
         friends.put(m.optString("user"), m.optBoolean("online"));
@@ -205,6 +207,7 @@ public class MainActivity extends Activity {
     if (sharing || pc != null) { log("فيه مشاركة شغالة بالفعل. اضغط إنهاء المشاركة الأول"); return; }
     friend = friendIn.getText().toString().trim();
     if (friend.isEmpty()) { log("اكتب اسم الصاحب الأول"); return; }
+    if (!stateReceived) { log("لسه بيجيب قائمة الأصحاب من السيرفر، جرّب بعد ثانية"); return; }
     if (!friends.containsKey(friend)) { log(friend + " مش من أصحابك لسه. ضيفه وخلّيه يقبل من صفحة الشات الأول"); return; }
     if (!Boolean.TRUE.equals(friends.get(friend))) { log(friend + " مش فاتح الشات دلوقتي. خلّيه يفتحه الأول وبعدين جرّب"); return; }
     log("بيطلب إذن تسجيل الشاشة...");
