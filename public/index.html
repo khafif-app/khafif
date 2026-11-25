@@ -97,12 +97,17 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
       مكالمة
     </button>
-    <button id="shareBtn" onclick="toggleShare()" style="display:none">
+    <button id="shareBtn" onclick="toggleShare()">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       شاشة
     </button>
   </header>
   <div id="remoteWrap"><video id="remoteVideo" autoplay playsinline></video></div>
+  <div id="incomingCall" style="display:none;align-items:center;gap:10px;padding:10px;background:#0f2b1d;border-bottom:1px solid #2f3336">
+    <span style="flex:1">مكالمة واردة...</span>
+    <button onclick="acceptCall()" style="background:#00ba7c;padding:8px 18px;border-radius:8px;font-weight:bold">رد</button>
+    <button onclick="rejectCall()" style="background:#e0245e;padding:8px 18px;border-radius:8px;font-weight:bold">رفض</button>
+  </div>
   <div id="msgs"></div>
   <div id="status2" style="font-size:12px;color:#71767b;padding:0 10px 4px;min-height:16px"></div>
   <input id="filePick" type="file" accept="image/*,video/*" style="display:none" onchange="sendMedia(this)">
@@ -128,15 +133,18 @@ let makingOffer = false, ignoreOffer = false;
 let me = null, token = null, peer = null;
 let creds = null, authed = false, reconnectTimer = null, authTimer = null, elsewhereRetries = 0;
 let friends = {}, requests = [], unread = {};
+// STUN only for now: the previously hardcoded free TURN (openrelay.metered.ca) is dead
+// (DNS blackholed). A verified TURN route can be added here if real-network tests need one.
 const ICE = {
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'],
-      username: 'openrelayproject', credential: 'openrelayproject' },
   ],
 };
 const $ = id => document.getElementById(id);
-// call/share buttons hidden for chat milestone
+// call/share buttons hidden until calls pass real end-to-end evidence; ?calls=1 enables for testing
+if (new URLSearchParams(location.search).has('calls')) {
+  addEventListener('DOMContentLoaded', () => { $('callBtn').style.display = ''; $('shareBtn').style.display = ''; });
+}
 
 function showView(v) {
   for (const el of document.querySelectorAll('.view')) el.classList.remove('active');
@@ -373,6 +381,41 @@ function sendMedia(input) {
   }
 }
 
+let callState = null; // null | outgoing | incoming | active
+let ringTimer = null;
+function showIncoming() { $('incomingCall').style.display = 'flex'; }
+function hideIncoming() { $('incomingCall').style.display = 'none'; }
+async function acceptCall() {
+  hideIncoming();
+  clearTimeout(ringTimer);
+  if (!pc) newPeer(true);
+  try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك عشان ترد'); endCall(true); return; }
+  callState = 'active';
+  $('callBtn').classList.add('off');
+  setStatus('المكالمة شغالة');
+}
+function rejectCall() {
+  hideIncoming();
+  clearTimeout(ringTimer);
+  sig({ call: 'end' });
+  if (pc) { pc.close(); pc = null; }
+  callState = null;
+  setStatus('');
+}
+function endCall(notify) {
+  if (notify) sig({ call: 'end' });
+  clearTimeout(ringTimer);
+  if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; $('shareBtn').classList.remove('off'); }
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  localStream = null;
+  if (pc) { pc.close(); pc = null; }
+  callState = null;
+  $('remoteWrap').style.display = 'none';
+  $('remoteAudio').srcObject = null;
+  $('callBtn').classList.remove('off');
+  hideIncoming();
+}
+
 let rec, recChunks;
 async function toggleRec() {
   const btn = $('micBtn');
@@ -452,8 +495,24 @@ function sig(data) { if (ws && ws.readyState === 1 && peer) ws.send(JSON.stringi
 
 async function onSignal(data) {
   try {
+    if (data.call === 'end') {
+      const was = callState;
+      endCall(false);
+      setStatus(was === 'incoming' ? 'المكالمة اتلغت' : 'المكالمة قفلت');
+      return;
+    }
     if (data.description) {
-      if (!pc) { newPeer(true); await ensureMic(); $('callBtn').classList.add('off'); }
+      if (!pc) {
+        // Incoming call: show accept/reject, answer only after the user accepts (mic on demand).
+        if (data.description.type !== 'offer') return;
+        newPeer(true);
+        callState = 'incoming';
+        showIncoming();
+        clearTimeout(ringTimer);
+        ringTimer = setTimeout(() => { if (callState === 'incoming') { rejectCall(); } }, 45000);
+        await pc.setRemoteDescription(data.description);
+        return;
+      }
       const offerCollision = data.description.type === 'offer' && (makingOffer || pc.signalingState !== 'stable');
       ignoreOffer = !polite && offerCollision;
       if (ignoreOffer) return;
@@ -476,19 +535,16 @@ async function ensureMic() {
 async function toggleCall() {
   const btn = $('callBtn');
   if (!pc) {
+    if (!friends[peer]) { setStatus(peer + ' مش متصل دلوقتي، جرب لما يكون متصل'); return; }
     newPeer(false);
-    try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك'); pc.close(); pc = null; return; }
+    try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك عشان المكالمة'); pc.close(); pc = null; return; }
+    callState = 'outgoing';
     btn.classList.add('off');
-    setStatus('جاري الاتصال...');
+    setStatus('بنرن...');
+    ringTimer = setTimeout(() => { if (callState === 'outgoing') { setStatus('مفيش رد'); endCall(true); } }, 45000);
   } else {
-    if (screenStream) toggleShare();
-    if (localStream) localStream.getTracks().forEach(t => t.stop());
-    localStream = null;
-    pc.close(); pc = null;
-    $('remoteWrap').style.display = 'none';
-    $('remoteAudio').srcObject = null;
-    btn.classList.remove('off');
-    setStatus('');
+    endCall(true);
+    setStatus('المكالمة قفلت');
   }
 }
 
@@ -496,7 +552,7 @@ async function toggleShare() {
   if (!pc) return;
   const btn = $('shareBtn');
   if (!screenStream) {
-    try { screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true }); } catch (e) { return; }
+    try { screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true }); } catch (e) { setStatus('مشاركة الشاشة مش متاحة على المتصفح ده'); return; }
     for (const t of screenStream.getTracks()) pc.addTrack(t, screenStream);
     screenStream.getVideoTracks()[0].onended = () => toggleShare();
     btn.classList.add('off');

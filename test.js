@@ -80,10 +80,14 @@ b.on('message', (raw) => {
   if (m.t === 'chat' && m.from === UA) bGotChat = true;
   if (m.t === 'voice' && m.from === UA) bGotVoice = true;
 });
+let sGotBacklog = -1;
 s.on('message', (raw) => {
   const m = JSON.parse(raw);
   if (m.t === 'error' && /أصحاب/.test(m.text)) sBlocked = true;
+  if (m.t === 'chat' || m.t === 'voice' || m.t === 'media') sGotBacklog = 1;
+  if (m.t === 'backlog_done') sGotBacklog = m.count;
 });
+setTimeout(() => { s.send(JSON.stringify({ t: 'open_chat', with: UA })); }, 1500);
 
 setTimeout(() => {
   check('A registered', aState);
@@ -103,6 +107,7 @@ setTimeout(() => {
   check('unsupported media mime rejected', aBadMimeRejected);
   check('A received B signal', aGotSignal);
   check('stranger blocked (not friends)', sBlocked);
+  check('stranger open_chat gets no history', sGotBacklog === -1);
   check('rate limiter fired', aRateLimited);
   a.close(); b.close(); s.close();
   process.exit(failures ? 1 : 0);

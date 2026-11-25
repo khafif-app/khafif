@@ -25,6 +25,10 @@ const MIME = {
 // Storage: Postgres when DATABASE_URL is set (deployment), local JSON file otherwise (dev/test).
 // Store-and-forward and push subscriptions need Postgres; file mode stays relay-only.
 const usePg = !!process.env.DATABASE_URL;
+// Global admission cap for stored media (photos/videos), bytes of base64 data summed.
+// Chosen guardrail well under Neon's free 0.5GB so text/accounts always have room.
+// Over budget => new media is rejected with a readable error; nothing is deleted.
+const MEDIA_BUDGET = parseInt(process.env.MEDIA_BUDGET_BYTES || '350000000', 10);
 let pool = null;
 let db = { users: {} }; // username -> { salt, hash, friends: [], requests: [] }
 
@@ -262,6 +266,14 @@ chatWss.on('connection', (ws) => {
       const mime = msg.mime || (msg.t === 'voice' ? 'audio/webm' : null);
       if (usePg) {
         try {
+          if (msg.t === 'media') {
+            const r = await pool.query(`SELECT COALESCE(SUM(octet_length(data)),0)::bigint AS used FROM messages WHERE kind='media'`);
+            const used = Number(r.rows[0].used);
+            if (used + (data ? data.length : 0) > MEDIA_BUDGET) {
+              send(ws, { t: 'error', code: 'storage_full', text: 'مساحة التخزين مليانة دلوقتي، جرب صورة أصغر أو فيديو أقصر' });
+              return;
+            }
+          }
           await pool.query('INSERT INTO messages (sender, recipient, kind, text, data, mime, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
             [ws.me, to, msg.t, text, data, mime, ts]);
         } catch (e) { console.error('pg-error:', e.message); }
