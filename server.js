@@ -164,7 +164,20 @@ async function pushNotify(to, from) {
   } catch (e) { console.error('pg-error:', e.message); }
 }
 
+// Chat heartbeat: Render's proxy can swallow close frames, leaving stale "online"
+// entries that block re-login. Ping every 15s; terminate clients that miss a pong.
+const chatInterval = setInterval(() => {
+  for (const ws of chatWss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 15000);
+chatWss.on('close', () => clearInterval(chatInterval));
+
 chatWss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.rate = { count: 0, reset: Date.now() + 5000 };
   ws.on('message', async (buf) => {
     let msg;
@@ -193,7 +206,7 @@ chatWss.on('connection', (ws) => {
         if (!rec) { send(ws, { t: 'error', text: 'مفيش حساب بالاسم ده. لو أول مرة، اضغط إنشاء حساب' }); return; }
         const h = crypto.scryptSync(p, rec.salt, 64);
         if (!crypto.timingSafeEqual(h, Buffer.from(rec.hash, 'hex'))) { send(ws, { t: 'error', text: 'الباسورد غلط' }); return; }
-        if (online.has(u)) { send(ws, { t: 'error', text: 'الحساب مفتوح من جهاز تاني دلوقتي' }); return; }
+        if (online.has(u)) { send(ws, { t: 'error', code: 'online_elsewhere', text: 'الحساب مفتوح من جهاز تاني دلوقتي' }); return; }
         bind(ws, u);
         send(ws, { t: 'logged_in', username: u });
         sendState(ws);

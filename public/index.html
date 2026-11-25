@@ -48,6 +48,10 @@
   #remoteWrap { display: none; background: #000; }
   #remoteWrap video { width: 100%; max-height: 40dvh; }
   #status { font-size: 12px; color: #71767b; padding: 0 10px 4px; min-height: 16px; }
+  #ostatus { font-size: 15px; padding: 10px; min-height: 24px; text-align: center; border-radius: 8px; }
+  #ostatus.err { background: #3d1f28; color: #ff6b78; font-weight: bold; }
+  #ostatus.ok { background: #0f2b1d; color: #00ba7c; }
+  #onboard button:disabled { opacity: .5; }
   .badge { background: #1d9bf0; color: #fff; border-radius: 12px; padding: 2px 9px; font-size: 12px; font-weight: bold; }
 
   .view.active { animation: viewIn .22s ease-out; }
@@ -67,6 +71,7 @@
   <button onclick="doLogin()">تسجيل دخول</button>
   <button onclick="doRegister()" style="background:#2f3336">إنشاء حساب جديد</button>
   <p>أول مرة؟ اضغط «إنشاء حساب جديد». عندك حساب؟ «تسجيل دخول». مفيش استرجاع باسورد، فاكتبه عندك.</p>
+  <p id="ostatus"></p>
 </div>
 
 <div id="home" class="view">
@@ -117,6 +122,7 @@
 let ws, pc, localStream, screenStream, polite = false;
 let makingOffer = false, ignoreOffer = false;
 let me = null, token = null, peer = null;
+let creds = null, authed = false, reconnectTimer = null, authTimer = null, elsewhereRetries = 0;
 let friends = {}, requests = [], unread = {};
 const ICE = {
   iceServers: [
@@ -133,23 +139,46 @@ function showView(v) {
   $(v).classList.add('active');
   if (v === 'home') renderLists();
 }
-function setStatus(s) { $('status2').textContent = s; $('status').textContent = s; }
+function setStatus(s, kind) {
+  $('status2').textContent = s; $('status').textContent = s;
+  const o = $('ostatus'); o.textContent = s; o.className = kind || '';
+}
+function busy(on) { for (const b of document.querySelectorAll('#onboard button')) b.disabled = on; }
 
 function connect(msg) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(proto + '://' + location.host + '/ws');
   ws.onopen = () => ws.send(JSON.stringify(msg));
   ws.onmessage = e => onMsg(JSON.parse(e.data));
-  ws.onclose = () => setStatus('انقطع الاتصال. افتح الصفحة تاني.');
+  ws.onerror = () => {
+    if (!authed) { setStatus('مش قادر أوصل للسيرفر. شيك على النت وجرب تاني.', 'err'); busy(false); }
+  };
+  ws.onclose = () => {
+    if (authed && creds) {
+      setStatus('انقطع الاتصال، بنرجع نتصل...', 'ok');
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => connect({ t: 'login', username: creds.u, password: creds.p }), 2000);
+    } else if (!authed) {
+      setStatus('مش قادر أوصل للسيرفر دلوقتي. ممكن يكون بيصحى، استنى شوية واضغط تاني.', 'err');
+      busy(false);
+    }
+  };
 }
 function doLogin() { startAuth('login'); }
 function doRegister() { startAuth('register'); }
 function startAuth(kind) {
   const u = $('username').value.trim();
   const p = $('password').value;
-  if (!u || !p) { alert('اكتب اسم المستخدم والباسورد'); return; }
+  if (!u || !p) { setStatus('اكتب اسم المستخدم والباسورد', 'err'); return; }
   me = u;
+  authed = false;
   localStorage.setItem('khafif_user', u);
+  busy(true);
+  setStatus('لحظة، بنوصل للسيرفر...', 'ok');
+  clearTimeout(authTimer);
+  authTimer = setTimeout(() => {
+    if (!authed) { setStatus('السيرفر بيصحى أو النت ضعيف. استنى شوية واضغط تاني.', 'err'); busy(false); }
+  }, 15000);
   connect({ t: kind, username: u, password: p });
 }
 function addFriend() {
@@ -174,8 +203,14 @@ function openChat(u) {
 
 function onMsg(m) {
   if (m.t === 'registered' || m.t === 'logged_in') {
+    authed = true;
+    elsewhereRetries = 0;
+    creds = { u: $('username').value.trim(), p: $('password').value };
+    clearTimeout(authTimer);
+    busy(false);
     me = m.username;
     $('meName').textContent = '@' + m.username;
+    setStatus('');
     showView('home');
   } else if (m.t === 'state') {
     friends = {};
@@ -213,8 +248,20 @@ function onMsg(m) {
     }
   } else if (m.t === 'signal') {
     if (m.from === peer) onSignal(m.data);
-  } else if (m.t === 'error' || m.t === 'info') {
-    setStatus(m.text);
+  } else if (m.t === 'error') {
+    setStatus(m.text, 'err');
+    if (m.code === 'online_elsewhere' && authed && creds && elsewhereRetries < 9) {
+      // Stale session on the server: its heartbeat culls it within ~30s. Keep retrying.
+      elsewhereRetries++;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => connect({ t: 'login', username: creds.u, password: creds.p }), 5000);
+      setStatus('بنرجع نتصل...', 'ok');
+    } else if (!authed) {
+      clearTimeout(authTimer);
+      busy(false);
+    }
+  } else if (m.t === 'info') {
+    setStatus(m.text, 'ok');
   }
 }
 
