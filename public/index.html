@@ -130,6 +130,11 @@
 <script>
 let ws, pc, localStream, screenStream, polite = false;
 let makingOffer = false, ignoreOffer = false;
+let pendingCand = [];
+async function flushCand() {
+  const q = pendingCand; pendingCand = [];
+  for (const c of q) { try { await pc.addIceCandidate(c); } catch (e) {} }
+}
 let me = null, token = null, peer = null;
 let creds = null, authed = false, reconnectTimer = null, authTimer = null, elsewhereRetries = 0;
 let friends = {}, requests = [], unread = {};
@@ -481,6 +486,7 @@ async function subscribePush() {
 
 function newPeer(isPolite) {
   polite = isPolite;
+  pendingCand = [];
   pc = new RTCPeerConnection(ICE);
   pc.onicecandidate = e => { if (e.candidate) sig({ candidate: e.candidate }); };
   pc.onnegotiationneeded = async () => {
@@ -516,17 +522,20 @@ async function onSignal(data) {
         clearTimeout(ringTimer);
         ringTimer = setTimeout(() => { if (callState === 'incoming') { rejectCall(); } }, 45000);
         await pc.setRemoteDescription(data.description);
+        await flushCand();
         return;
       }
       const offerCollision = data.description.type === 'offer' && (makingOffer || pc.signalingState !== 'stable');
       ignoreOffer = !polite && offerCollision;
       if (ignoreOffer) return;
       await pc.setRemoteDescription(data.description);
+      await flushCand();
       if (data.description.type === 'offer') {
         await pc.setLocalDescription();
         sig({ description: pc.localDescription });
       }
     } else if (data.candidate) {
+      if (!pc || !pc.remoteDescription) { pendingCand.push(data.candidate); return; }
       try { await pc.addIceCandidate(data.candidate); } catch (e) { if (!ignoreOffer) throw e; }
     }
   } catch (e) {}
