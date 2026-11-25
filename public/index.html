@@ -255,12 +255,16 @@ function onMsg(m) {
     if (m.from === peer) onSignal(m.data);
   } else if (m.t === 'error') {
     setStatus(m.text, 'err');
-    if (m.code === 'online_elsewhere' && authed && creds && elsewhereRetries < 9) {
-      // Stale session on the server: its heartbeat culls it within ~30s. Keep retrying.
+    if (m.code === 'online_elsewhere' && elsewhereRetries < 9) {
+      // Stale session on the server: its heartbeat culls it within ~30s. Keep retrying,
+      // including for a manual login right after the app was closed (the common case).
       elsewhereRetries++;
+      const u = creds ? creds.u : $('username').value.trim();
+      const p = creds ? creds.p : $('password').value;
+      if (!u || !p) { setStatus(m.text, 'err'); clearTimeout(authTimer); busy(false); return; }
       clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => connect({ t: 'login', username: creds.u, password: creds.p }), 5000);
-      setStatus('بنرجع نتصل...', 'ok');
+      reconnectTimer = setTimeout(() => connect({ t: 'login', username: u, password: p }), 5000);
+      setStatus('الحساب كان لسه مفتوح، بنرجع نتصل...', 'ok');
     } else if (!authed) {
       clearTimeout(authTimer);
       busy(false);
