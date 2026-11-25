@@ -134,12 +134,17 @@ public class MainActivity extends Activity {
     if (req != 7) return;
     if (res != RESULT_OK || data == null) { log("الإذن اترفض"); return; }
     log("الإذن اتمنح. بيشغل الخدمة...");
+    final Intent fd = data;
+    ShareService.onForeground = () -> runOnUiThread(() -> startCapture(fd));
+    ShareService.onFailed = () -> runOnUiThread(() -> log("خدمة المقدمة فشلت، المشاركة ماتبدأتش"));
     try {
       if (Build.VERSION.SDK_INT >= 26) startForegroundService(new Intent(this, ShareService.class));
       else startService(new Intent(this, ShareService.class));
-    } catch (Throwable t) { log("خطأ تشغيل الخدمة: " + t); return; }
-    final Intent fd = data;
-    logView.postDelayed(() -> startCapture(fd), 800);
+    } catch (Throwable t) {
+      ShareService.onForeground = null; ShareService.onFailed = null;
+      log("خطأ تشغيل الخدمة: " + t);
+      return;
+    }
   }
 
   void startCapture(Intent projData) {
@@ -178,7 +183,10 @@ public class MainActivity extends Activity {
           } catch (Throwable t) { log("خطأ إرسال العرض: " + t); }
         }
       }, new MediaConstraints());
-    } catch (Throwable t) { log("خطأ بدء المشاركة: " + t); }
+    } catch (Throwable t) {
+      log("خطأ بدء المشاركة: " + t);
+      cleanup("فشل بدء المشاركة"); // no capture -> no service left behind
+    }
   }
 
   void onSignal(JSONObject data) {
@@ -205,6 +213,7 @@ public class MainActivity extends Activity {
   boolean sharing = false;
   void cleanup(String why) {
     log("قفل: " + why);
+    ShareService.onForeground = null; ShareService.onFailed = null;
     try { if (sharing) sig(new JSONObject().put("call", "end")); } catch (Throwable t) {}
     sharing = false;
     try { if (capturer != null) { capturer.stopCapture(); capturer.dispose(); capturer = null; } } catch (Throwable t) { log("خطأ وقف الالتقاط: " + t); }

@@ -12,6 +12,11 @@ import android.os.IBinder;
 // Foreground service required by Android 14+ before MediaProjection capture starts.
 public class ShareService extends Service {
   static final String CHANNEL = "share";
+  // Explicit readiness coordination: MainActivity sets onForeground once before
+  // starting the service; it fires only after startForeground() has returned,
+  // so MediaProjection capture never races the foreground-service requirement.
+  static volatile Runnable onForeground;
+  static volatile Runnable onFailed;
 
   @Override public IBinder onBind(Intent i) { return null; }
 
@@ -32,8 +37,14 @@ public class ShareService extends Service {
         startForeground(1, n);
       }
       MainActivity.log("خدمة المقدمة اشتغلت");
+      Runnable r = onForeground; onForeground = null;
+      if (r != null) r.run();
     } catch (Throwable t) {
       MainActivity.log("خطأ في خدمة المقدمة: " + t);
+      onForeground = null;
+      Runnable f = onFailed; onFailed = null;
+      if (f != null) f.run();
+      try { stopSelf(); } catch (Throwable t2) {}
     }
     return START_STICKY;
   }
