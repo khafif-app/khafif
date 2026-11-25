@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>خفيف - محادثة خاصة</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: sans-serif; background: #0f1419; color: #e7e9ea; height: 100dvh; display: flex; flex-direction: column; }
+  #join { margin: auto; display: flex; flex-direction: column; gap: 10px; width: min(90vw, 320px); }
+  #join h2 { text-align: center; margin-bottom: 8px; }
+  #join input, #join button { padding: 12px; border-radius: 10px; border: 1px solid #2f3336; background: #16181c; color: inherit; font-size: 16px; }
+  #join button { background: #1d9bf0; border: none; cursor: pointer; font-weight: bold; }
+  #join .or { text-align: center; color: #71767b; font-size: 13px; }
+  #app { display: none; flex-direction: column; height: 100dvh; }
+  header { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid #2f3336; }
+  header .title { flex: 1; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+  header .code { direction: ltr; background: #16181c; border: 1px solid #2f3336; border-radius: 6px; padding: 2px 8px; font-size: 13px; }
+  header button { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; border: none; background: #1d9bf0; color: #fff; cursor: pointer; font-size: 14px; }
+  header button.off { background: #536471; }
+  header button.icon { background: none; padding: 6px; color: #9aa0a6; }
+  button svg { display: block; }
+  #msgs { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 80%; padding: 8px 12px; border-radius: 14px; background: #1d9bf0; align-self: flex-end; word-break: break-word; }
+  .msg.other { background: #2f3336; align-self: flex-start; }
+  .msg.sys { background: none; color: #71767b; align-self: center; font-size: 13px; }
+  .msg .who { font-size: 11px; color: #cfe7fa; margin-bottom: 2px; }
+  .msg.other .who { color: #9aa0a6; }
+  #bar { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #2f3336; align-items: center; }
+  #bar input { flex: 1; padding: 12px; border-radius: 20px; border: 1px solid #2f3336; background: #16181c; color: inherit; font-size: 16px; }
+  #bar button { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; border: none; background: #1d9bf0; color: #fff; cursor: pointer; }
+  #bar button.off { background: #e0245e; }
+  #remoteWrap { display: none; background: #000; }
+  #remoteWrap video { width: 100%; max-height: 40dvh; }
+  #status { font-size: 12px; color: #71767b; padding: 0 10px 4px; }
+</style>
+</head>
+<body>
+<div id="join">
+  <h2>خفيف</h2>
+  <input id="name" placeholder="اسمك" autocomplete="off">
+  <button onclick="createRoom()">إنشاء غرفة جديدة</button>
+  <div class="or">— أو ادخل بكود —</div>
+  <input id="room" placeholder="كود الغرفة" autocomplete="off" style="direction:ltr;text-align:center">
+  <button onclick="joinRoom()">دخول</button>
+</div>
+
+<div id="app">
+  <header>
+    <div class="title">
+      <span class="code" id="roomCode"></span>
+      <button class="icon" onclick="copyCode()" title="نسخ الكود">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+    <button id="callBtn" onclick="toggleCall()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      مكالمة
+    </button>
+    <button id="shareBtn" onclick="toggleShare()" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      شاشة
+    </button>
+  </header>
+  <div id="remoteWrap"><video id="remoteVideo" autoplay playsinline></video></div>
+  <div id="msgs"></div>
+  <div id="status"></div>
+  <div id="bar">
+    <button id="micBtn" onclick="toggleRec()" title="رسالة صوتية">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+    </button>
+    <input id="text" placeholder="اكتب رسالة..." onkeydown="if(event.key==='Enter')sendChat()">
+    <button onclick="sendChat()" title="إرسال">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:scaleX(-1)"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+</div>
+
+<audio id="remoteAudio" autoplay></audio>
+
+<script>
+let ws, pc, localStream, screenStream, myName, polite = false;
+let makingOffer = false, ignoreOffer = false;
+const ICE = {
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'],
+      username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+};
+const $ = id => document.getElementById(id);
+
+if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) $('shareBtn').style.display = '';
+
+function connect(roomMsg) {
+  myName = $('name').value.trim() || 'ضيف';
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host);
+  ws.onopen = () => ws.send(JSON.stringify(Object.assign({ name: myName }, roomMsg)));
+  ws.onmessage = e => onMsg(JSON.parse(e.data));
+  ws.onclose = () => setStatus('انقطع الاتصال. افتح الصفحة تاني.');
+}
+function createRoom() { connect({ t: 'create' }); }
+function joinRoom() {
+  const room = $('room').value.trim();
+  if (!room) { alert('اكتب كود الغرفة'); return; }
+  connect({ t: 'join', room });
+}
+function copyCode() {
+  const c = $('roomCode').textContent;
+  if (navigator.clipboard) navigator.clipboard.writeText(c);
+  setStatus('اتنسخ: ابعته للطرف التاني');
+}
+
+function onMsg(m) {
+  if (m.t === 'joined') {
+    polite = m.peers > 1;
+    $('join').style.display = 'none';
+    $('app').style.display = 'flex';
+    $('roomCode').textContent = m.room;
+    setStatus(m.peers > 1 ? 'في حد موجود معاك' : 'ابعت الكود للطرف التاني');
+  } else if (m.t === 'error') {
+    setStatus(m.text);
+    if (ws) ws.close();
+  } else if (m.t === 'chat') {
+    addMsg(m.text, m.from, true);
+  } else if (m.t === 'voice') {
+    addVoice(m.data, m.mime, m.from, true);
+  } else if (m.t === 'sys') {
+    addMsg(m.text, '', false, true);
+    setStatus('');
+  } else if (m.t === 'signal') {
+    onSignal(m.data);
+  }
+}
+
+function addMsg(text, who, other, sys) {
+  const d = document.createElement('div');
+  d.className = 'msg' + (sys ? ' sys' : other ? ' other' : '');
+  if (who && !sys) { const w = document.createElement('div'); w.className = 'who'; w.textContent = who; d.appendChild(w); }
+  d.appendChild(document.createTextNode(text));
+  $('msgs').appendChild(d);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+
+function sendChat() {
+  const v = $('text').value.trim();
+  if (!v || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ t: 'chat', text: v }));
+  addMsg(v, '', false);
+  $('text').value = '';
+}
+
+function setStatus(s) { $('status').textContent = s; }
+
+let rec, recChunks;
+async function toggleRec() {
+  const btn = $('micBtn');
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { setStatus('محتاج إذن المايك'); return; }
+  recChunks = [];
+  rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => recChunks.push(e.data);
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    btn.classList.remove('off');
+    setStatus('');
+    const blob = new Blob(recChunks, { type: rec.mimeType });
+    if (blob.size < 1000) return;
+    if (blob.size > 300000) { setStatus('التسجيل طويل، جرب أقصر'); return; }
+    const r = new FileReader();
+    r.onload = () => {
+      const b64 = String(r.result).split(',')[1];
+      ws.send(JSON.stringify({ t: 'voice', data: b64, mime: rec.mimeType }));
+      addVoice(b64, rec.mimeType, '', false);
+    };
+    r.readAsDataURL(blob);
+  };
+  rec.start();
+  btn.classList.add('off');
+  setStatus('بي سجّل... اضغط تاني للإرسال');
+}
+
+function addVoice(b64, mime, who, other) {
+  const d = document.createElement('div');
+  d.className = 'msg' + (other ? ' other' : '');
+  if (who) { const w = document.createElement('div'); w.className = 'who'; w.textContent = who; d.appendChild(w); }
+  const a = document.createElement('audio');
+  a.controls = true;
+  a.src = 'data:' + mime + ';base64,' + b64;
+  a.style.maxWidth = '220px';
+  d.appendChild(a);
+  $('msgs').appendChild(d);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+
+function newPeer() {
+  pc = new RTCPeerConnection(ICE);
+  pc.onicecandidate = e => { if (e.candidate) sig({ candidate: e.candidate }); };
+  pc.onnegotiationneeded = async () => {
+    try {
+      makingOffer = true;
+      await pc.setLocalDescription();
+      sig({ description: pc.localDescription });
+    } catch (e) {} finally { makingOffer = false; }
+  };
+  pc.ontrack = e => {
+    if (e.track.kind === 'audio') $('remoteAudio').srcObject = e.streams[0];
+    else { $('remoteWrap').style.display = 'block'; $('remoteVideo').srcObject = e.streams[0]; }
+  };
+  pc.onconnectionstatechange = () => setStatus('حالة المكالمة: ' + pc.connectionState);
+}
+
+function sig(data) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'signal', data })); }
+
+async function onSignal(data) {
+  try {
+    if (data.description) {
+      const offerCollision = data.description.type === 'offer' && (makingOffer || pc.signalingState !== 'stable');
+      ignoreOffer = !polite && offerCollision;
+      if (ignoreOffer) return;
+      await pc.setRemoteDescription(data.description);
+      if (data.description.type === 'offer') {
+        if (!localStream) await ensureMic();
+        await pc.setLocalDescription();
+        sig({ description: pc.localDescription });
+      }
+    } else if (data.candidate) {
+      try { await pc.addIceCandidate(data.candidate); } catch (e) { if (!ignoreOffer) throw e; }
+    }
+  } catch (e) {}
+}
+
+async function ensureMic() {
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
+}
+
+async function toggleCall() {
+  const btn = $('callBtn');
+  if (!pc) {
+    newPeer();
+    try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك'); pc.close(); pc = null; return; }
+    btn.classList.add('off');
+    setStatus('جاري الاتصال...');
+  } else {
+    if (screenStream) toggleShare();
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+    pc.close(); pc = null;
+    $('remoteWrap').style.display = 'none';
+    $('remoteAudio').srcObject = null;
+    btn.classList.remove('off');
+    setStatus('');
+  }
+}
+
+async function toggleShare() {
+  if (!pc) return;
+  const btn = $('shareBtn');
+  if (!screenStream) {
+    try { screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true }); } catch (e) { return; }
+    for (const t of screenStream.getTracks()) pc.addTrack(t, screenStream);
+    screenStream.getVideoTracks()[0].onended = () => toggleShare();
+    btn.classList.add('off');
+  } else {
+    screenStream.getTracks().forEach(t => { t.stop(); pc.getSenders().filter(s => s.track === t).forEach(s => pc.removeTrack(s)); });
+    screenStream = null;
+    btn.classList.remove('off');
+  }
+}
+
+window.addEventListener('load', () => {
+  $('join').style.display='none';
+  $('app').style.display='flex';
+  $('roomCode').textContent='xK9mQ2vR4aLb';
+  addMsg('أهلا، التطبيق اشتغل؟', 'سارة', true);
+  addMsg('أيوه، وصلت رسالتك', '', false);
+  addMsg('جرب تبعتلي رسالة صوتية', 'سارة', true);
+  const d=document.createElement('div');d.className='msg';
+  const a=document.createElement('audio');a.controls=true;a.style.maxWidth='220px';d.appendChild(a);
+  $('msgs').appendChild(d);
+});
+</script>
+</body>
+</html>

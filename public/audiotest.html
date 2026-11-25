@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>RUNNING</title></head><body>
+<script>
+const out = (o) => { document.title = 'RESULT:' + JSON.stringify(o); };
+(async () => {
+  try {
+    const mk = () => new WebSocket('ws://' + location.host);
+    const A = mk(), B = mk();
+    const open = (w) => new Promise(r => w.onopen = r);
+    await Promise.all([open(A), open(B)]);
+    const waitMsg = (w, type, pred) => new Promise(r => w.addEventListener('message', function h(e) {
+      const m = JSON.parse(e.data);
+      if (m.t === type && (!pred || pred(m))) { w.removeEventListener('message', h); r(m); }
+    }));
+    const suf = Math.random().toString(36).slice(2, 8);
+    const ua = 'au' + suf, ub = 'bu' + suf;
+    A.send(JSON.stringify({ t: 'register', username: ua, password: 'pw123456' }));
+    await waitMsg(A, 'registered');
+    B.send(JSON.stringify({ t: 'register', username: ub, password: 'pw123456' }));
+    await waitMsg(B, 'registered');
+    const reqP = waitMsg(B, 'friend_request', m => m.from === ua);
+    A.send(JSON.stringify({ t: 'friend_add', username: ub }));
+    await reqP;
+    B.send(JSON.stringify({ t: 'friend_accept', username: ua }));
+    await waitMsg(A, 'friend_added', m => m.user === ub);
+
+    const voiceP = waitMsg(B, 'voice', m => m.from === ua);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    const stopped = new Promise(r => rec.onstop = r);
+    rec.start();
+    await new Promise(r => setTimeout(r, 1500));
+    rec.stop();
+    await stopped;
+    stream.getTracks().forEach(t => t.stop());
+
+    const blob = new Blob(chunks, { type: rec.mimeType });
+    const buf = await blob.arrayBuffer();
+    let bin = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    A.send(JSON.stringify({ t: 'voice', to: ub, data: btoa(bin), mime: rec.mimeType }));
+
+    const m = await voiceP;
+    const rbin = atob(m.data);
+    const arr = new Uint8Array(rbin.length);
+    for (let i = 0; i < rbin.length; i++) arr[i] = rbin.charCodeAt(i);
+    const recvLen = arr.length;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const audio = await ctx.decodeAudioData(arr.buffer);
+    out({ ok: true, flow: 'register>add>accept>voice', sentBytes: buf.byteLength, recvBytes: recvLen, mime: rec.mimeType, durationSec: audio.duration, sampleRate: audio.sampleRate });
+  } catch (e) {
+    out({ ok: false, error: String(e) });
+  }
+})();
+</script>
+</body></html>

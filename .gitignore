@@ -1,0 +1,12 @@
+node_modules/
+data.json
+data.json.bak-*
+.secrets*
+*.log
+frames/
+seq/
+voice-fixture.b64.txt
+khafif-preview.mp4
+vcheck-*.png
+shot*.png
+preview-*.png
