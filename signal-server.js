@@ -14,7 +14,20 @@ function broadcast(room, obj, exclude) {
   for (const c of set) if (c !== exclude) send(c, obj);
 }
 
+// Heartbeat: proxies can swallow close frames; ping every 15s and drop peers that miss a pong,
+// so the remaining peer gets peer-left within ~30s even when a clean close never arrives.
+const interval = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 15000);
+wss.on('close', () => clearInterval(interval));
+
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (buf) => {
     let msg;
     try { msg = JSON.parse(buf); } catch { return; }
