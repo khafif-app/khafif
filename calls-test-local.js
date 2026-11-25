@@ -50,7 +50,7 @@ function wsClient(name) {
   }
   const URLQ = 'http://127.0.0.1:3470/?calls=1';
   const tA = await newTab(URLQ);
-  const tB = await newTab(URLQ);
+  const tB = await newTab('http://127.0.0.1:3470/');
   await sleep(3000);
   async function login(t, u, other) {
     for (let i = 0; i < 25; i++) { const ok = await t.evl(`!!document.getElementById('username')`); if (ok === true) break; await sleep(1000); }
@@ -75,7 +75,9 @@ function wsClient(name) {
   for (let i = 0; i < 15 && !banner; i++) { await sleep(1000); banner = await tB.evl(`document.getElementById('incomingCall').style.display === 'flex'`); }
   log('B incoming banner:', banner);
   if (!banner) { log('FAIL no banner'); cleanup(1); }
+  log('B pre-accept callBtn hidden:', await tB.evl(`getComputedStyle(document.getElementById('callBtn')).display === 'none'`));
   const acc = await tB.evl(`acceptCall().then(()=>'acc-ok').catch(e=>'acc-err: '+e.message)`);
+  log('B post-accept callBtn visible:', await tB.evl(`getComputedStyle(document.getElementById('callBtn')).display !== 'none'`));
   log('accept result:', acc);
   log('B status:', await tB.evl(`document.getElementById('ostatus').textContent`));
   log('B callState:', await tB.evl(`typeof callState !== 'undefined' ? callState : 'undef'`));
@@ -105,5 +107,7 @@ function wsClient(name) {
   log('STATS A:', stats);
   log('STATS B:', statsB);
   await tA.evl(`endCall(true); 'ended'`);
+  await sleep(1500);
+  log('B post-end callBtn hidden again:', await tB.evl(`getComputedStyle(document.getElementById('callBtn')).display === 'none'`));
   cleanup(0);
 })().catch(e => { log('ERR', e.message); cleanup(1); });

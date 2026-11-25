@@ -406,6 +406,7 @@ async function acceptCall() {
     try { await pc.setLocalDescription(); sig({ description: pc.localDescription }); } catch (e) {}
   }
   callState = 'active';
+  $('callBtn').style.display = '';
   $('callBtn').classList.add('off');
   setStatus('المكالمة شغالة');
 }
@@ -428,6 +429,8 @@ function endCall(notify) {
   $('remoteWrap').style.display = 'none';
   $('remoteAudio').srcObject = null;
   $('callBtn').classList.remove('off');
+  // Outside ?calls=1 the call button returns to hidden once no call is live.
+  if (!new URLSearchParams(location.search).has('calls')) $('callBtn').style.display = 'none';
   hideIncoming();
 }
 
@@ -559,6 +562,7 @@ async function toggleCall() {
     try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك عشان المكالمة'); pc.close(); pc = null; return; }
     callState = 'outgoing';
     btn.classList.add('off');
+    btn.style.display = '';
     setStatus('بنرن...');
     ringTimer = setTimeout(() => { if (callState === 'outgoing') { setStatus('مفيش رد'); endCall(true); } }, 45000);
   } else {
