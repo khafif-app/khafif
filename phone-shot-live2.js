@@ -62,7 +62,15 @@ function wsClient(name) {
   B2.send({ t: 'media', to: UA, data: fs.readFileSync('/tmp/shotimg.jpg').toString('base64'), mime: 'image/jpeg' });
   await sleep(800);
   await evl(`document.getElementById('text').value='تمام الحمد لله، التطبيق شغال'; sendChat(); 'sent'`);
-  await sleep(1500);
+  await sleep(1200);
+  // real mic recording flow: start MediaRecorder via the mic button, record ~2.5s, stop, verify it lands as a voice message
+  await evl(`toggleRec(); 'rec-start'`);
+  await sleep(2500);
+  await evl(`toggleRec(); 'rec-stop'`);
+  await sleep(2500);
+  console.log('REC PROBE:', await evl(`JSON.stringify({audios: document.getElementById('msgs').querySelectorAll('audio').length, dur: (() => { const a = [...document.querySelectorAll('#msgs audio')].pop(); return a ? a.duration : -1; })()})`));
+  console.log('SHAREBTN HIDDEN:', await evl(`getComputedStyle(document.getElementById('shareBtn')).display === 'none'`));
+  console.log('CALLBTN HIDDEN:', await evl(`getComputedStyle(document.getElementById('callBtn')).display === 'none'`));
   const state = await evl(`JSON.stringify({view: document.querySelector('.view.active').id, msgs: document.getElementById('msgs').children.length, media: document.getElementById('msgs').querySelectorAll('img,video').length, audio: document.getElementById('msgs').querySelectorAll('audio').length})`);
   console.log('STATE:', state);
   const shot = await cmd('Page.captureScreenshot', { format: 'png' });
