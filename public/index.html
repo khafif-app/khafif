@@ -105,7 +105,11 @@
   <div id="remoteWrap"><video id="remoteVideo" autoplay playsinline></video></div>
   <div id="msgs"></div>
   <div id="status2" style="font-size:12px;color:#71767b;padding:0 10px 4px;min-height:16px"></div>
+  <input id="filePick" type="file" accept="image/*,video/*" style="display:none" onchange="sendMedia(this)">
   <div id="bar">
+    <button id="attachBtn" onclick="document.getElementById('filePick').click()" title="صورة أو فيديو">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    </button>
     <button id="micBtn" onclick="toggleRec()" title="رسالة صوتية">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
     </button>
@@ -234,13 +238,14 @@ function onMsg(m) {
     setStatus(m.user + ' بقى صديقك');
   } else if (m.t === 'backlog_done') {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'backlog_ack', with: m.with }));
-  } else if (m.t === 'chat' || m.t === 'voice') {
+  } else if (m.t === 'chat' || m.t === 'voice' || m.t === 'media') {
     const mine = m.from === me;
     const key = m.from + ':' + m.ts;
     if (seenKeys.has(key)) return;
     if ((peer === m.from || mine) && $('chat').classList.contains('active')) {
       seenKeys.add(key);
       if (m.t === 'chat') addMsg(m.text, !mine);
+      else if (m.t === 'media') addMedia(m.data, m.mime, !mine);
       else addVoice(m.data, m.mime, !mine);
       if (!mine && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'backlog_ack', with: m.from }));
     } else if (!mine) {
@@ -317,6 +322,51 @@ function sendChat() {
   ws.send(JSON.stringify({ t: 'chat', to: peer, text: v }));
   addMsg(v, false);
   $('text').value = '';
+}
+
+function addMedia(b64, mime, other) {
+  const d = document.createElement('div');
+  d.className = 'msg' + (other ? ' other' : '');
+  let el;
+  if (mime.startsWith('image/')) { el = document.createElement('img'); el.style.maxWidth = '220px'; el.style.borderRadius = '10px'; }
+  else { el = document.createElement('video'); el.controls = true; el.style.maxWidth = '220px'; el.style.borderRadius = '10px'; }
+  el.src = 'data:' + mime + ';base64,' + b64;
+  d.appendChild(el);
+  $('msgs').appendChild(d);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+const MAX_MEDIA_BYTES = 2800 * 1000; // ~2.8MB binary -> ~3.7M base64 chars, under server cap
+function sendMedia(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f || !peer || !ws || ws.readyState !== 1) return;
+  const done = (b64, mime) => {
+    ws.send(JSON.stringify({ t: 'media', to: peer, data: b64, mime: mime }));
+    addMedia(b64, mime, false);
+    setStatus('');
+  };
+  if (f.type.startsWith('image/')) {
+    // Compress: max 1280px, JPEG 0.82 - keeps Neon free storage alive
+    const img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/jpeg', 0.82);
+      URL.revokeObjectURL(img.src);
+      done(url.split(',')[1], 'image/jpeg');
+    };
+    img.onerror = () => setStatus('الصورة دي مش راضية تتقري', 'err');
+    img.src = URL.createObjectURL(f);
+  } else if (f.type === 'video/mp4' || f.type === 'video/webm') {
+    if (f.size > MAX_MEDIA_BYTES) { setStatus('الفيديو كبير (الحد حوالي 2.8 ميجا). جرب فيديو أقصر.', 'err'); return; }
+    const r = new FileReader();
+    r.onload = () => done(String(r.result).split(',')[1], f.type);
+    r.readAsDataURL(f);
+  } else {
+    setStatus('اختار صورة أو فيديو mp4/webm', 'err');
+  }
 }
 
 let rec, recChunks;

@@ -10,6 +10,7 @@ const b = new WebSocket(url);
 const s = new WebSocket(url);
 let aGotChat = false, bGotChat = false, bGotVoice = false, aGotSignal = false;
 let sBlocked = false, aRateLimited = false, bGotRequest = false, aGotFriendAdded = false, bGotFriendAdded = false;
+let aGotMedia = false, aBadMimeRejected = false;
 let wrongPassRejected = false, bRegistered = false, aState = false;
 let shortPassRejected = false, dupRegisterRejected = false, ghostLoginRejected = false, concurrentRejected = false;
 
@@ -23,6 +24,8 @@ a.on('message', (raw) => {
   if (m.t === 'state') aState = true;
   if (m.t === 'friend_added' && m.user === UB) aGotFriendAdded = true;
   if (m.t === 'chat' && m.from === UB) aGotChat = true;
+  if (m.t === 'media' && m.from === UB) aGotMedia = true;
+  if (m.t === 'error' && /مش مدعوم/.test(m.text)) aBadMimeRejected = true;
   if (m.t === 'signal' && m.from === UB) aGotSignal = true;
   if (m.t === 'error' && /كتير/.test(m.text)) aRateLimited = true;
 });
@@ -67,6 +70,8 @@ b.on('message', (raw) => {
       b.send(JSON.stringify({ t: 'chat', to: UA, text: 'أهلا أحمد' }));
       b.send(JSON.stringify({ t: 'voice', to: UA, data: 'SGVsbG8', mime: 'audio/webm' }));
       b.send(JSON.stringify({ t: 'signal', to: UA, data: { description: { type: 'offer', sdp: 'x' } } }));
+      b.send(JSON.stringify({ t: 'media', to: UA, data: '/9j/4AAQSkZJRg==', mime: 'image/jpeg' }));
+      a.send(JSON.stringify({ t: 'media', to: UB, data: 'AAAA', mime: 'image/gif' }));
       a.send(JSON.stringify({ t: 'voice', to: UB, data: 'V29ybGQ', mime: 'audio/webm' }));
       s.send(JSON.stringify({ t: 'chat', to: UA, text: 'اختراق' }));
       for (let j = 0; j < 20; j++) a.send(JSON.stringify({ t: 'chat', to: UB, text: 'spam' + j }));
@@ -94,6 +99,8 @@ setTimeout(() => {
   check('B received A chat', bGotChat);
   check('A received B chat', aGotChat);
   check('B received A voice', bGotVoice);
+  check('A received B media', aGotMedia);
+  check('unsupported media mime rejected', aBadMimeRejected);
   check('A received B signal', aGotSignal);
   check('stranger blocked (not friends)', sBlocked);
   check('rate limiter fired', aRateLimited);

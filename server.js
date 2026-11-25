@@ -74,7 +74,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-const chatWss = new WebSocketServer({ noServer: true, maxPayload: 512 * 1024 });
+const chatWss = new WebSocketServer({ noServer: true, maxPayload: 6 * 1024 * 1024 });
 const sigWss = new WebSocketServer({ noServer: true, maxPayload: 262144 });
 server.on('upgrade', (req, socket, head) => {
   const p = req.url.split('?')[0];
@@ -182,7 +182,7 @@ chatWss.on('connection', (ws) => {
   ws.on('message', async (buf) => {
     let msg;
     try { msg = JSON.parse(buf); } catch { return; }
-    if (msg.t === 'chat' || msg.t === 'voice') {
+    if (msg.t === 'chat' || msg.t === 'voice' || msg.t === 'media') {
       const now = Date.now();
       if (now > ws.rate.reset) { ws.rate.count = 0; ws.rate.reset = now + 5000; }
       if (++ws.rate.count > 12) { send(ws, { t: 'error', text: 'رسايل كتير بسرعة، استنى لحظة' }); return; }
@@ -248,14 +248,17 @@ chatWss.on('connection', (ws) => {
       toUser(target, { t: 'friend_added', user: ws.me });
       sendState(ws);
       const w2 = online.get(target); if (w2) sendState(w2);
-    } else if (msg.t === 'chat' || msg.t === 'voice') {
+    } else if (msg.t === 'chat' || msg.t === 'voice' || msg.t === 'media') {
       const to = String(msg.to || '');
       const me = db.users[ws.me];
       if (!me || !me.friends.includes(to)) { send(ws, { t: 'error', text: 'لازم تكونوا أصحاب الأول' }); return; }
+      const MEDIA_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm'];
+      if (msg.t === 'media' && !MEDIA_MIMES.includes(msg.mime)) { send(ws, { t: 'error', text: 'نوع الملف ده مش مدعوم' }); return; }
       const w2 = online.get(to);
       const ts = Date.now();
       const text = msg.t === 'chat' ? String(msg.text || '').slice(0, 4000) : null;
-      const data = msg.t === 'voice' ? String(msg.data || '').slice(0, 400000) : null;
+      const data = msg.t === 'voice' ? String(msg.data || '').slice(0, 400000)
+                 : msg.t === 'media' ? String(msg.data || '').slice(0, 4200000) : null;
       const mime = msg.mime || (msg.t === 'voice' ? 'audio/webm' : null);
       if (usePg) {
         try {
@@ -273,7 +276,7 @@ chatWss.on('connection', (ws) => {
         return;
       }
       if (msg.t === 'chat') send(w2, { t: 'chat', from: ws.me, text: text, ts });
-      else send(w2, { t: 'voice', from: ws.me, data: data, mime: mime, ts });
+      else send(w2, { t: msg.t, from: ws.me, data: data, mime: mime, ts });
     } else if (msg.t === 'open_chat') {
       const u = String(msg.with || '');
       const me = db.users[ws.me];
@@ -286,7 +289,7 @@ chatWss.on('connection', (ws) => {
         const rows = r.rows.reverse();
         for (const row of rows) {
           if (row.kind === 'chat') send(ws, { t: 'chat', from: row.sender, text: row.text, ts: Number(row.ts) });
-          else send(ws, { t: 'voice', from: row.sender, data: row.data, mime: row.mime, ts: Number(row.ts) });
+          else send(ws, { t: row.kind, from: row.sender, data: row.data, mime: row.mime, ts: Number(row.ts) });
         }
         // Nothing is deleted on delivery. The client acks after rendering; the ack
         // only marks rows seen. A dropped socket therefore cannot discard messages:
@@ -333,6 +336,8 @@ async function runRetention() {
     await pool.query('DELETE FROM messages WHERE ts < $1', [Date.now() - 30 * 24 * 3600 * 1000]);
     await pool.query(`DELETE FROM messages WHERE id IN (
       SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY LEAST(sender, recipient), GREATEST(sender, recipient) ORDER BY ts DESC) AS rn FROM messages) t WHERE t.rn > 500)`);
+    await pool.query(`DELETE FROM messages WHERE kind='media' AND id IN (
+      SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY LEAST(sender, recipient), GREATEST(sender, recipient) ORDER BY ts DESC) AS rn FROM messages WHERE kind='media') t WHERE t.rn > 50)`);
   } catch (e) { console.error('pg-error:', e.message); }
 }
 setInterval(runRetention, 6 * 3600 * 1000);
