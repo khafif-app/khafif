@@ -400,6 +400,11 @@ async function acceptCall() {
   clearTimeout(ringTimer);
   if (!pc) newPeer(true);
   try { await ensureMic(); } catch (e) { setStatus('محتاج إذن المايك عشان ترد'); endCall(true); return; }
+  // Deferred answer: negotiationneeded does not fire while have-remote-offer, so
+  // create and send the answer here, now that the user accepted and the mic is in.
+  if (pc.signalingState === 'have-remote-offer') {
+    try { await pc.setLocalDescription(); sig({ description: pc.localDescription }); } catch (e) {}
+  }
   callState = 'active';
   $('callBtn').classList.add('off');
   setStatus('المكالمة شغالة');
