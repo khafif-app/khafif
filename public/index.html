@@ -159,9 +159,11 @@ function addFriend() {
   $('friendName').value = '';
 }
 function acceptFriend(u) { ws.send(JSON.stringify({ t: 'friend_accept', username: u })); }
+let seenKeys = new Set();
 function openChat(u) {
   peer = u;
   delete unread[u];
+  seenKeys = new Set();
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'open_chat', with: u }));
   $('peerName').textContent = u;
   $('peerDot').className = 'dot' + (friends[u] ? ' on' : '');
@@ -198,10 +200,15 @@ function onMsg(m) {
   } else if (m.t === 'backlog_done') {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'backlog_ack', with: m.with }));
   } else if (m.t === 'chat' || m.t === 'voice') {
-    if (peer === m.from && $('chat').classList.contains('active')) {
-      if (m.t === 'chat') addMsg(m.text, true);
-      else addVoice(m.data, m.mime, true);
-    } else {
+    const mine = m.from === me;
+    const key = m.from + ':' + m.ts;
+    if (seenKeys.has(key)) return;
+    if ((peer === m.from || mine) && $('chat').classList.contains('active')) {
+      seenKeys.add(key);
+      if (m.t === 'chat') addMsg(m.text, !mine);
+      else addVoice(m.data, m.mime, !mine);
+      if (!mine && ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'backlog_ack', with: m.from }));
+    } else if (!mine) {
       setStatus('رسالة جديدة من ' + m.from);
     }
   } else if (m.t === 'signal') {

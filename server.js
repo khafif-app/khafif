@@ -41,6 +41,7 @@ async function loadDb() {
     pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
     await pool.query('CREATE TABLE IF NOT EXISTS users (username text PRIMARY KEY, salt text, hash text, friends jsonb, requests jsonb)');
     await pool.query('CREATE TABLE IF NOT EXISTS messages (id bigserial PRIMARY KEY, sender text, recipient text, kind text, text text, data text, mime text, ts bigint)');
+    await pool.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at bigint');
     await pool.query('CREATE TABLE IF NOT EXISTS push_subs (endpoint text PRIMARY KEY, username text, p256dh text, auth text)');
     const r = await pool.query('SELECT * FROM users');
     for (const row of r.rows) db.users[row.username] = { salt: row.salt, hash: row.hash, friends: row.friends || [], requests: row.requests || [] };
@@ -141,7 +142,7 @@ async function sendState(ws) {
   let unread = {};
   if (usePg) {
     try {
-      const r = await pool.query('SELECT sender, count(*)::int AS n FROM messages WHERE recipient=$1 GROUP BY sender', [ws.me]);
+      const r = await pool.query('SELECT sender, count(*)::int AS n FROM messages WHERE recipient=$1 AND delivered_at IS NULL GROUP BY sender', [ws.me]);
       for (const row of r.rows) unread[row.sender] = row.n;
     } catch (e) { console.error('pg-error:', e.message); }
   }
@@ -239,45 +240,53 @@ chatWss.on('connection', (ws) => {
       const me = db.users[ws.me];
       if (!me || !me.friends.includes(to)) { send(ws, { t: 'error', text: 'لازم تكونوا أصحاب الأول' }); return; }
       const w2 = online.get(to);
+      const ts = Date.now();
+      const text = msg.t === 'chat' ? String(msg.text || '').slice(0, 4000) : null;
+      const data = msg.t === 'voice' ? String(msg.data || '').slice(0, 400000) : null;
+      const mime = msg.mime || (msg.t === 'voice' ? 'audio/webm' : null);
+      if (usePg) {
+        try {
+          await pool.query('INSERT INTO messages (sender, recipient, kind, text, data, mime, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+            [ws.me, to, msg.t, text, data, mime, ts]);
+        } catch (e) { console.error('pg-error:', e.message); }
+      }
       if (!w2) {
         if (usePg) {
-          try {
-            await pool.query('INSERT INTO messages (sender, recipient, kind, text, data, mime, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-              [ws.me, to, msg.t, msg.t === 'chat' ? String(msg.text || '').slice(0, 4000) : null, msg.t === 'voice' ? String(msg.data || '').slice(0, 400000) : null, msg.mime || null, Date.now()]);
-            send(ws, { t: 'info', text: to + ' مش متصل، هتوصله الرسالة لما يفتح' });
-            pushNotify(to, ws.me);
-          } catch (e) { send(ws, { t: 'info', text: to + ' مش متصل دلوقتي' }); }
+          send(ws, { t: 'info', text: to + ' مش متصل، هتوصله الرسالة لما يفتح' });
+          pushNotify(to, ws.me);
         } else {
           send(ws, { t: 'info', text: to + ' مش متصل دلوقتي' });
         }
         return;
       }
-      if (msg.t === 'chat') send(w2, { t: 'chat', from: ws.me, text: String(msg.text || '').slice(0, 4000), ts: Date.now() });
-      else send(w2, { t: 'voice', from: ws.me, data: String(msg.data || '').slice(0, 400000), mime: String(msg.mime || 'audio/webm'), ts: Date.now() });
+      if (msg.t === 'chat') send(w2, { t: 'chat', from: ws.me, text: text, ts });
+      else send(w2, { t: 'voice', from: ws.me, data: data, mime: mime, ts });
     } else if (msg.t === 'open_chat') {
       const u = String(msg.with || '');
       const me = db.users[ws.me];
       if (!me || !me.friends.includes(u) || !usePg) return;
       try {
-        const r = await pool.query('SELECT id, sender, kind, text, data, mime, ts FROM messages WHERE recipient=$1 AND sender=$2 ORDER BY ts ASC LIMIT 300', [ws.me, u]);
-        for (const row of r.rows) {
+        // Bounded conversation history: newest 100 messages between the pair, both directions.
+        const r = await pool.query(
+          'SELECT id, sender, kind, text, data, mime, ts FROM messages WHERE (sender=$1 AND recipient=$2) OR (sender=$2 AND recipient=$1) ORDER BY ts DESC LIMIT 100',
+          [ws.me, u]);
+        const rows = r.rows.reverse();
+        for (const row of rows) {
           if (row.kind === 'chat') send(ws, { t: 'chat', from: row.sender, text: row.text, ts: Number(row.ts) });
           else send(ws, { t: 'voice', from: row.sender, data: row.data, mime: row.mime, ts: Number(row.ts) });
         }
-        // Deletion happens only on the client's backlog_ack, so a dropped socket
-        // mid-delivery cannot silently discard undelivered messages; the next
-        // open_chat redelivers them (the client dedupes by ts+from).
-        if (r.rows.length) {
-          (ws.pendingBacklog = ws.pendingBacklog || {})[u] = r.rows.map(x => x.id);
-          send(ws, { t: 'backlog_done', with: u, count: r.rows.length });
-        }
+        // Nothing is deleted on delivery. The client acks after rendering; the ack
+        // only marks rows seen. A dropped socket therefore cannot discard messages:
+        // the next open_chat replays them (the client clears and re-renders on open).
+        send(ws, { t: 'backlog_done', with: u, count: rows.length });
       } catch (e) { console.error('pg-error:', e.message); }
     } else if (msg.t === 'backlog_ack') {
       const u = String(msg.with || '');
-      const ids = ws.pendingBacklog && ws.pendingBacklog[u];
-      if (!ids || !usePg) return;
-      delete ws.pendingBacklog[u];
-      pool.query('DELETE FROM messages WHERE id = ANY($1::bigint[])', [ids]).catch((e) => console.error('pg-error:', e.message));
+      if (!usePg || !ws.me) return;
+      try {
+        await pool.query('UPDATE messages SET delivered_at=$3 WHERE recipient=$1 AND sender=$2 AND delivered_at IS NULL', [ws.me, u, Date.now()]);
+        sendState(ws);
+      } catch (e) { console.error('pg-error:', e.message); }
     } else if (msg.t === 'push_sub') {
       if (!usePg) return;
       const sub = msg.sub || {};
@@ -303,6 +312,19 @@ chatWss.on('connection', (ws) => {
   });
 });
 
+// Bounded retention: messages are kept 30 days, and at most 500 per friend pair.
+// Beyond that the oldest are deleted. Accounts/friendships have no expiry.
+async function runRetention() {
+  if (!usePg) return;
+  try {
+    await pool.query('DELETE FROM messages WHERE ts < $1', [Date.now() - 30 * 24 * 3600 * 1000]);
+    await pool.query(`DELETE FROM messages WHERE id IN (
+      SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY LEAST(sender, recipient), GREATEST(sender, recipient) ORDER BY ts DESC) AS rn FROM messages) t WHERE t.rn > 500)`);
+  } catch (e) { console.error('pg-error:', e.message); }
+}
+setInterval(runRetention, 6 * 3600 * 1000);
+
 loadDb().then(() => {
+  runRetention();
   server.listen(PORT, () => console.log('listening on ' + PORT + (usePg ? ' (postgres)' : ' (file)') + (webpush ? ' (push)' : '')));
 });

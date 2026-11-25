@@ -47,9 +47,9 @@ async function until(fn, ms = 15000) { const t0 = Date.now(); while (Date.now() 
   ok('backlog delivered on open_chat', !!got, JSON.stringify(B2.inbox));
   ok('text verbatim + ordered', !!got && got[0].t === 'chat' && got[0].text === 'تجربة تخزين' && got[0].from === 'pgta');
   ok('voice verbatim', !!got && got[1].t === 'voice' && got[1].data === voiceB64 && got[1].mime === 'audio/webm', got && got[1] ? String(got[1].data||'').length : 'none');
-  const stillThere = await pool.query(`SELECT count(*)::int c FROM messages WHERE sender='pgta' AND recipient='pgtb'`);
-  ok('rows retained until ack (no silent loss)', stillThere.rows[0].c === 2, JSON.stringify(stillThere.rows));
-  ok('backlog_done received', !!(await until(() => B2.inbox.some(m => m.t === 'backlog_done' && m.with === 'pgta' && m.count === 2))), JSON.stringify(B2.inbox.filter(m=>m.t==='backlog_done')));
+  const stillThere = await pool.query(`SELECT count(*)::int c FROM messages WHERE sender='pgta' AND recipient='pgtb' AND delivered_at IS NULL`);
+  ok('rows retained unseen until ack (no silent loss)', stillThere.rows[0].c === 2, JSON.stringify(stillThere.rows));
+  ok('backlog_done received', !!(await until(() => B2.inbox.some(m => m.t === 'backlog_done' && m.with === 'pgta'))), JSON.stringify(B2.inbox.filter(m=>m.t==='backlog_done')));
   B2.close(); await wait(400);
   const B3 = conn();
   await until(() => B3.readyState === 1);
@@ -57,11 +57,15 @@ async function until(fn, ms = 15000) { const t0 = Date.now(); while (Date.now() 
   await until(() => B3.inbox.some(m => m.t === 'logged_in'));
   B3.send2({ t: 'open_chat', with: 'pgta' });
   const got3 = await until(() => { const ms = B3.inbox.filter(m => m.t === 'chat' || m.t === 'voice'); return ms.length >= 2 ? ms : null; });
-  ok('redelivery after reconnect without ack', !!got3 && got3[0].text === 'تجربة تخزين' && got3[1].data === voiceB64);
+  ok('history replay after reconnect (still unseen)', !!got3 && got3[0].text === 'تجربة تخزين' && got3[1].data === voiceB64);
   B3.send2({ t: 'backlog_ack', with: 'pgta' });
-  await wait(600);
-  const cleared = await pool.query(`SELECT count(*)::int c FROM messages WHERE sender='pgta' AND recipient='pgtb'`);
-  ok('messages emptied only after ack', cleared.rows[0].c === 0, JSON.stringify(cleared.rows));
+  await wait(700);
+  const seenRows = await pool.query(`SELECT count(*)::int c, count(delivered_at)::int d FROM messages WHERE sender='pgta' AND recipient='pgtb'`);
+  ok('ack marks seen, rows kept (history retained)', seenRows.rows[0].c === 2 && seenRows.rows[0].d === 2, JSON.stringify(seenRows.rows));
+  // sender-side history: A reopens the chat and sees the conversation including own messages
+  A.send2({ t: 'open_chat', with: 'pgtb' });
+  const gotA = await until(() => { const ms = A.inbox.filter(m => (m.t === 'chat' || m.t === 'voice') && m.from === 'pgta'); return ms.length >= 2 ? ms : null; });
+  ok('sender sees own history on open_chat', !!gotA && gotA[0].text === 'تجربة تخزين');
   await pool.query(`DELETE FROM messages WHERE sender LIKE 'pgt%' OR recipient LIKE 'pgt%'`);
   await pool.query(`DELETE FROM push_subs WHERE username LIKE 'pgt%'`);
   await pool.query(`DELETE FROM users WHERE username LIKE 'pgt%'`);
