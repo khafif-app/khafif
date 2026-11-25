@@ -327,9 +327,16 @@ chatWss.on('connection', (ws) => {
     } else if (msg.t === 'signal') {
       const to = String(msg.to || '');
       const me = db.users[ws.me];
-      if (!me || !me.friends.includes(to)) return;
+      // Offers get explicit rejections so the caller is never left waiting on a
+      // silently dropped offer; other signal kinds stay silently dropped.
+      const isOffer = msg.data && msg.data.description && msg.data.description.type === 'offer';
+      if (!me || !me.friends.includes(to)) {
+        if (isOffer) send(ws, { t: 'error', text: 'مينفعش تشارك معاه قبل ما تبقوا أصحاب على التطبيق' });
+        return;
+      }
       const w2 = online.get(to);
       if (w2) send(w2, { t: 'signal', from: ws.me, data: msg.data });
+      else if (isOffer) send(ws, { t: 'error', text: to + ' مش فاتح الشات دلوقتي. خلّيه يفتحه الأول وبعدين جرّب تاني' });
     }
   });
   ws.on('close', () => {

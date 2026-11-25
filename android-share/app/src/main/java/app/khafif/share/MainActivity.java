@@ -41,6 +41,7 @@ public class MainActivity extends Activity {
   EglBase egl;
   VideoCapturer capturer;
   String me, friend;
+  boolean loggedIn = false;
   final ArrayDeque<String> pendingCand = new ArrayDeque<>();
   static final String WS_URL = "wss://khafif-signal.onrender.com/ws";
 
@@ -93,6 +94,7 @@ public class MainActivity extends Activity {
     me = userIn.getText().toString().trim();
     friend = friendIn.getText().toString().trim();
     if (me.isEmpty() || passIn.getText().toString().isEmpty() || friend.isEmpty()) { log("اكتب اسم المستخدم والباسورد واسم الصاحب الأول"); return; }
+    if (ws != null) { log("فيه اتصال شغال بالفعل. اضغط إنهاء المشاركة الأول لو عايز تبدأ من جديد"); return; }
     log("بيتصل بالسيرفر...");
     connectWs(passIn.getText().toString());
   }
@@ -107,8 +109,8 @@ public class MainActivity extends Activity {
       }
       @Override public void onMessage(WebSocket w, String text) { MainActivity.this.onWs(text); }
       @Override public void onMessage(WebSocket w, ByteString b) {}
-      @Override public void onFailure(WebSocket w, Throwable t, okhttp3.Response r) { log("فشل الاتصال: " + t); }
-      @Override public void onClosed(WebSocket w, int c, String reason) { log("الاتصال اتقفل: " + reason); }
+      @Override public void onFailure(WebSocket w, Throwable t, okhttp3.Response r) { log("فشل الاتصال: " + t); if (ws == w) ws = null; }
+      @Override public void onClosed(WebSocket w, int c, String reason) { log("الاتصال اتقفل: " + reason); if (ws == w) ws = null; }
     });
   }
 
@@ -116,8 +118,11 @@ public class MainActivity extends Activity {
     try {
       JSONObject m = new JSONObject(text);
       String t = m.optString("t");
-      if (t.equals("logged_in")) { log("دخلنا. بيطلب إذن تسجيل الشاشة..."); runOnUiThread(this::askProjection); }
-      else if (t.equals("error")) { log("خطأ من السيرفر: " + m.optString("text")); }
+      if (t.equals("logged_in")) { loggedIn = true; log("دخلنا. بيطلب إذن تسجيل الشاشة..."); runOnUiThread(this::askProjection); }
+      else if (t.equals("error")) {
+        log("خطأ من السيرفر: " + m.optString("text"));
+        if (!loggedIn && ws != null) { try { ws.close(1000, "login-error"); } catch (Throwable t2) {} ws = null; }
+      }
       else if (t.equals("signal")) { onSignal(m.getJSONObject("data")); }
     } catch (Throwable e) { log("خطأ قراءة رسالة: " + e); }
   }
@@ -180,6 +185,9 @@ public class MainActivity extends Activity {
             pc.setLocalDescription(new SdpObs("setLocal"), sdp);
             sig(new JSONObject().put("description", new JSONObject().put("type", "offer").put("sdp", sdp.description)));
             log("العرض اتبعت لـ " + friend + ". مستني يرد من التطبيق...");
+            logView.postDelayed(() -> {
+              if (sharing && pc != null && pc.getRemoteDescription() == null) { log("الصاحب ماردش خلال 30 ثانية. اتأكد إنه فاتح الشات وجرّب تاني"); cleanup("مفيش رد من الصاحب"); }
+            }, 30000);
           } catch (Throwable t) { log("خطأ إرسال العرض: " + t); }
         }
       }, new MediaConstraints());
@@ -219,6 +227,8 @@ public class MainActivity extends Activity {
     try { if (capturer != null) { capturer.stopCapture(); capturer.dispose(); capturer = null; } } catch (Throwable t) { log("خطأ وقف الالتقاط: " + t); }
     try { if (pc != null) { pc.close(); pc = null; } } catch (Throwable t) { log("خطأ قفل الاتصال: " + t); }
     pendingCand.clear();
+    loggedIn = false;
+    try { if (ws != null) { ws.close(1000, "cleanup"); ws = null; } } catch (Throwable t) {}
     try { stopService(new Intent(this, ShareService.class)); } catch (Throwable t) {}
   }
 
